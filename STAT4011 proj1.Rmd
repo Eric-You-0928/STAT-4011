@@ -1,0 +1,81 @@
+
+```{r}
+covid<-read.csv("~/Desktop/archive/time_series_covid_19_confirmed_US.csv")
+US=covid[,-(1:11)] 
+USA=colSums(US)
+USA=rbind(US,USA)
+USA1=USA[3341,]
+UStotal=USA[3341,]
+for (i in 2:246) {
+  if(UStotal[1,i]>=0){
+    USA1[1,i]=UStotal[1,i]-UStotal[1,i-1]
+    }
+}
+USA1day=t(ts(USA1))
+USA2=data.frame(x=1:246,y=USA1day)
+train=window(USA1day,start=1,end=232)
+test=window(USA1day,start=233)
+#ARIMA
+arimaAuto=auto.arima(train)
+arimaAuto
+forecastARIMA= forecast(arimaAuto,h=14)
+plot(forecastARIMA)
+lines(USA1day,col="red")
+accuracy(forecastARIMA,test)
+
+#Holt's exp smoothing
+holtsForecast=HoltWinters(train,gamma = F)
+holtsForecast
+plot(holtsForecast)
+forecasteplot=forecast:::forecast.HoltWinters(holtsForecast,h=14)
+plot(forecasteplot)
+lines(USA1day, col="red") 
+accuracy(forecasteplot,test)
+#SVR
+svr=svm(y~x,USA2)
+svr.pred=predict(svr,USA2)
+plot(USA2$x,USA2$y)
+points(svr.pred,col="blue")
+RMSE(USA2$y,svr.pred)
+#SVr Tune
+numSV=sapply(X=seq(0,1,0.01),FUN=function(e)svm(X3341~x, USA2, cost=1, epsilon =e)$tot.nSV)
+plot(x=seq(0,1,0.01), y=numSV, xlab="ε value", ylab="# of support vectors", pch=16, cex=.5, main="# of SVs in SVR")
+RMSE = sapply(X=seq(0,1,0.01), 
+         FUN=function(e) sqrt(mean((svm(X3341~x, USA2, cost=1, epsilon =e)$residuals)^2)))
+plot(x=seq(0,1,0.01), y=RMSE, xlab="ε value", ylab="RMSE", pch=16, cex=.5, main="RMSE in SVR")
+
+tuneSVR=tune(method=svm,X3341~x,data=USA2,ranges =list(epsilon =seq(0,1,0.1), cost= 2^(2:9)))
+print(tuneSVR)
+plot(tuneSVR)
+tuneSVR=tune(method=svm,X3341~x,data=USA2,ranges =list(epsilon =seq(0,0.3,0.01), cost= 2^(2:9)))
+print(tuneSVR)
+plot(tuneSVR)
+
+tunedModel <- tuneSVR$best.model
+tunedModelY <- predict(tunedModel, USA2) 
+rmse(USA2$X3341,tunedModelY)
+
+plot(USA2$x,USA2$y)
+points(svr.pred,col="blue")
+points(tunedModelY,col="red")
+RMSE(USA2$y,tunedModelY)
+
+```
+```{r}
+
+```
+```{r}
+
+```
+
+
+
+```{r}
+# accuracy(USA1day,arimaAuto)
+
+
+accuracy(forecast3,test)
+```
+
+
+

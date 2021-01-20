@@ -1,0 +1,283 @@
+---
+#STAT 4011 project 2 You Xinyu 1155110904
+
+---
+```{r}
+House = data.frame(read.csv("~/Desktop/House.csv"))
+str(House)
+summary(House)
+House$LotShape=as.factor(House$LotShape)
+House$LotShape=as.numeric(House$LotShape)
+#1 NA in MasVnrArea so simply replace na by mean would not affect much
+House$MasVnrArea[is.na(House$MasVnrArea)]= round(mean(House$MasVnrArea,na.rm = T))
+
+#87 NAs in LotFrontage so use regression imputation to handle this
+House_NoNA = House[!is.na(House$LotFrontage),-1]
+Regr_imput_1 = lm(LotFrontage~.,data=House_NoNA)
+step(Regr_imput_1)
+Regr_imput = lm(formula = LotFrontage ~ LotArea + LotShape + X2ndFlrSF + GrLivArea + 
+    TotRmsAbvGrd + GarageArea + WoodDeckSF, data = House_NoNA)
+Replace_NA = predict(Regr_imput_1,House[is.na(House$LotFrontage),-1])
+Replace_NA = round(Replace_NA)
+House[is.na(House$LotFrontage),2]=Replace_NA
+
+```
+```{r}
+set.seed(4011)
+n=sample(nrow(House),size = nrow(House)*0.8)
+train_set_H = House[n,-1]
+test_set_H = House[-n,-1]
+```
+
+```{r}
+train.set = fold(train_set_H,k=10)
+train.set= train.set %>% arrange(.folds)
+train.set$.folds=as.numeric(train.set$.folds)
+CV <- function(train.set, k, model, dependent, random = FALSE){
+  performances <- c()
+  for (fold in 1:k){
+    training_set <- train.set[train.set$.folds != fold,]
+    testing_set <- train.set[train.set$.folds == fold,]
+    predicted <- predict(model, testing_set)
+    MSE <- mse(predicted, testing_set[[dependent]])
+    performances[fold] <- MSE
+  }
+
+  return(performances)
+
+}
+model=lm(SalePrice~., data = train_set_H)
+summary(model)
+
+Nfolds<- trainControl(method = "cv", number = 10)
+# cv_full_mod <- train( SalePrice ~ ., data = train_set_H, method="lm",trControl=Nfolds)
+# cv_full_mod
+# summary(cv_full_mod)
+# Stepwise regression model
+step.model <- stepAIC(model, direction = "both",trace = FALSE)
+summary(step.model)
+models <- regsubsets(SalePrice~., data = train_set_H, nvmax = 5,method = "seqrep")
+summary(models)
+set.seed(1)
+# # Train the model
+step.model <- train(SalePrice ~., data =train_set_H,method = "leapBackward", tuneGrid = data.frame(nvmax = 1:5),trControl = Nfolds)
+step.model$results
+step.model$bestTune
+summary(step.model$finalModel)
+coef(step.model$finalModel, 4)
+final_mod=lm(SalePrice ~ TotalBsmtSF + X1stFlrSF + X2ndFlrSF + GarageArea, data = train_set_H)
+
+CV(train.set = train.set,k=10,model = model,dependent='SalePrice')
+CV(train.set = train.set,k=10,model = step.model,dependent='SalePrice')
+```
+
+```{r}
+library(glmnet)
+x = model.matrix(SalePrice ~ . , train_set_H)
+y = train_set_H$SalePrice
+grid = 10^seq(10, -2, length = 100)
+rid_mod = glmnet(x, y, alpha = 0, lambda = grid)
+dim(coef(rid_mod))
+#plot(rid_mod)
+#lamda 50 middle
+rid_mod$lambda[50]
+coef(rid_mod)[,50]
+sqrt(sum(coef(rid_mod)[c(-1,-2),50]^2))
+#coef 30 lamda big
+rid_mod$lambda[30]
+coef(rid_mod)[,30]
+sqrt(sum(coef(rid_mod)[c(-1,-2),30]^2))
+#Obtain ridge regression coef for new value of lambda = 30
+predict(rid_mod,s=30,type="coefficients")
+data_test = model.matrix(SalePrice ~ . , test_set_H)
+#predict test 1
+rid_pred_1=predict(ridge.mod,s=4,newx=data_test)
+cbind(test_set_H$SalePrice, rid_pred_1)
+RSS = sum((rid_pred_1 - test_set_H$SalePrice)^(2))
+MSE = RSS/nrow(test_set_H)#RMSE = sqrt(MSE)
+#predict test 2
+rid_pred_2=predict(rid_mod,s=0,newx=data_test)
+cbind(test_set_H$SalePrice, rid_pred_2)
+RSS = sum((rid_pred_2 - test_set_H$SalePrice)^(2))
+MSE = RSS/nrow(test_set_H)#RMSE = sqrt(MSE)
+#predict test 3
+rid_pred_3=predict(rid_mod,s=1e10,newx=data_test)
+cbind(test_set_H$SalePrice, rid_pred_3)
+RSS = sum((rid_pred_3 - test_set_H$SalePrice)^(2))
+MSE = RSS/nrow(test_set_H)#RMSE = sqrt(MSE)
+#Plot MSE
+set.seed(2)
+CV_rid = cv.glmnet(x, y, alpha=0)
+plot(CV_rid)
+#best lambda
+bestlam = CV_rid$lambda.min
+bestlam
+#best model
+rid_pred_best = predict(rid_mod, s=bestlam, newx = data_test)
+cbind(test_set_H$SalePrice, rid_pred_best)
+RSS = sum((rid_pred_best - test_set_H$SalePrice)^(2))
+MSE = RSS/nrow(test_set_H)#RMSE = sqrt(MSE)
+#Full Data model
+Whole_x = model.matrix(SalePrice ~ . , House[,-1])
+Whole_y = House$SalePrice
+out=glmnet(Whole_x, Whole_y, alpha = 0)
+predict(out, type = "coefficients", s=bestlam)[1:20]
+
+```
+```{r}
+library(glmnet)
+x = model.matrix(SalePrice ~ . , train_set_H)
+y = train_set_H$SalePrice
+grid = 10^seq(10,-2,length=100)
+#1st model
+las_mod=glmnet(x, y, alpha=1, lambda=grid)
+names(las_mod$beta[,100])
+#plot(lasso.mod, xvar="lambda")
+#lbs_fun(lasso.mod)
+par(mfrow=c(1,2))
+plot(las_mod, "norm", label = TRUE)
+plot(las_mod, "lambda", label = TRUE)
+par(mfrow=c(1,1))
+#cross validation
+set.seed(3)
+CV_las=cv.glmnet(x, y, alpha=1)
+plot(CV_las)
+#best lambda
+bestlam2=CV_las$lambda.min
+bestlam2
+#test data
+testData = model.matrix(SalePrice ~ . , test_set_H)
+#best model
+las_pred = predict(las_mod, s=bestlam2, newx = testData)
+cbind(test_set_H$SalePrice, las_pred)
+RSS = sum((las_pred - test_set_H$SalePrice)^(2))
+MSE = RSS/nrow(test_set_H)
+RMSE = sqrt(MSE)
+#Full data and the coefficient
+Fullx = model.matrix(SalePrice ~ . , House[,-1])
+Fully = House$SalePrice
+out=glmnet(Fullx, Fully, alpha = 1, lambda = grid)
+lasso.coef=predict(out, type = "coefficients", s=bestlam2)
+```
+
+```{r}
+#rf
+rf1 = randomForest(SalePrice~.,data=train.H)
+# plot(rf1)
+# predRF = predict(rf, test.H)
+# regr.eval(test.H$SalePrice,predRF)
+# plot(rf1)
+# which.min(rf1$mse)
+# sqrt(rf1$mse)
+
+# numFolds = trainControl(method = 'cv',number=10)
+# mtry=sqrt(ncol(train.H))
+# tuneGrid= expand.grid(.mtry=mtry)
+# train(SalePrice~.,data=train.H,method="rf",metric="RMSE",ntree=seq(500,2000,by=1000),trControl=numFolds,tuneGrid=tuneGrid)
+# 
+control1 = trainControl(method = 'cv',number=10,search = "grid")
+tune_Grid= expand.grid(.mtry=c(1:13))
+rf2=train(SalePrice~.,data=train.H,method="rf",metric="RMSE",ntree=1000,trControl=control1,tuneGrid=tune_Grid)
+
+# control2 = trainControl(method = 'cv',number=10,search = "random")
+# tune_Grid= expand.grid(.mtry=sqrt(ncol(train_set_H)))
+# rf3=train(SalePrice~.,data=train_set_H,method="rf",trControl=control2,tunLength=15)
+# set.seed(123)
+#m= tuneRF(x = train.H[,-14], y = train.H$SalePrice, mtryStart = 1, ntreeTry = 500 ,stepFactor=1, improve = 0.01, trace = FALSE)
+# hyper_grid <- expand.grid(
+#   mtry = seq(1, 10, by = 1),
+#   node_size = seq(1, 6, by = 1),
+#   OOB_RMSE = 0
+# )
+# for (i in 1:nrow(hyper_grid)) {
+#   # train model
+#   model <- ranger(
+#     formula = SalePrice ~ .,
+#     data = train.H, 
+#     num.trees = 1000, 
+#     mtry = hyper_grid$mtry[i],
+#     min.node.size = hyper_grid$node_size[i], 
+#     max.depth = 10,
+#     seed = 123
+#   )
+#  
+#   # 並將每一此訓練模型的OOB RMSE萃取儲存
+#   hyper_grid$OOB_RMSE[i] <- sqrt(model$prediction.error)
+# }
+# hyper_grid %>% 
+#   dplyr::arrange(OOB_RMSE) %>% 
+#   head(10)
+```
+```{r}
+
+```
+
+
+
+
+```{r}
+Titanic= data.frame(read.csv("~/Desktop/Titanic.csv"))
+str(Titanic)
+#Titanic$Sex <- unclass(Titanic$Sex)
+#Titanic$Embarked <- unclass(Titanic$Embarked)
+summary(Titanic)
+# missing data
+imput= mice(Titanic[,-1],m=5)
+imput
+Titanic_NoNA= complete(imput,1)
+# imput_tot2= complete(imput,2)
+# imput_tot3= complete(imput,3)
+# imput_tot4= complete(imput,4)
+# imput_tot5= complete(imput,5)
+Titanic_NoNA$Survived= as.factor(Titanic_NoNA$Survived)
+Titanic_NoNA$Pclass= as.factor(Titanic_NoNA$Pclass)
+Titanic_NoNA$Sex= as.factor(Titanic_NoNA$Sex)
+Titanic_NoNA$Embarked= as.factor(Titanic_NoNA$Embarked)
+s=sample(nrow(Titanic_NoNA),size = nrow(Titanic_NoNA)*0.8)
+train_T= Titanic_NoNA[s,]
+test_T= Titanic_NoNA[-s,]
+```
+
+```{r}
+NAage = Titanic[is.na(Titanic$Age), ]
+subage = Titanic[!is.na(Titanic$Age), ]
+numfolds = trainControl( method = "cv", number = 10)
+na_gbm = train(Age ~ . ,
+               data = subage,
+               method = 'gbm', 
+               trControl = numfolds
+               )
+pred_age <- predict(na_gbm, NAage)
+NAage$Age = round(as.numeric(pred_age))
+df = rbind(subage, NAage)
+tin = df
+```
+```{r}
+control=trainControl(method = "repeatedcv",number=10,repeats = 3)
+knn.fit= train(Survived~.,data=train_T,method="knn",metric="Accuracy",tuneLength=10,trControl=control)
+knn.fit
+plot(knn.fit)
+pred.knn= predict(knn.fit, test_T)
+confusionMatrix(pred.knn,test_T$Survived)
+```
+```{r}
+svm.fit = svm(formula= Survived~.,data=train_T,type='C-classification',kernel='radial')
+x= subset(train)
+y=
+svm.tune= tune.svm(Survived~.,data=train_T,cost = 10^(-4:4))
+summary(svm.tune)
+svm.tune$best.model
+pred.svm= predict(svm.tune$best.model,test_T)
+confusionMatrix(pred.svm,test_T$Survived)
+pred.svm= predict(svm.fit,test_T)
+confusionMatrix(pred.svm,test_T$Survived)
+
+
+
+```
+
+```{r}
+
+```
+
+
